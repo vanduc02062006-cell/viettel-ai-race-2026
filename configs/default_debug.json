@@ -1,0 +1,13 @@
+{
+  "debug_iterations": 1000,
+  "debug_resolution": 8,
+  "laptop_iterations": 3000,
+  "laptop_resolution": 8,
+  "strong_gpu_iterations": 30000,
+  "strong_gpu_resolution": 1,
+  "output_root": "outputs",
+  "submission_dir": "submission_round1",
+  "default_data_device": "cpu",
+  "train_data_root": "work_undistorted",
+  "original_data_root": "VAI_NVS_DATA"
+}

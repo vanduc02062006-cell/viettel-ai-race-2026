@@ -1,0 +1,16 @@
+outputs/
+logs/
+submission_round1/
+kaggle_clean/
+github_clean/
+VAI_NVS_DATA/
+work_undistorted/
+*.zip
+*.ply
+*.bin
+*.pt
+*.pth
+__pycache__/
+.DS_Store
+__MACOSX/
+*.pyc
