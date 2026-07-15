@@ -39,7 +39,7 @@ python tools/train_one_scene.py --scene_train_path ".\work_undistorted\phase1\pu
 
 ## 7. Lệnh nếu GPU mạnh hơn
 ```bash
-python tools/train_one_scene.py --scene_train_path ".\work_undistorted\phase1\public_set\hcm0031\train" --model_path "outputs\public_hcm0031_undistorted_r4_it3000" --iterations 3000 --resolution 4 --data_device cpu
+python tools/run_public_ablation.py --scene hcm0031 --tag r1_it30000_aa_dssim020 --iterations 30000 --resolution 1 --lambda_dssim 0.2
 ```
 
 ## 8. Cảnh báo quan trọng

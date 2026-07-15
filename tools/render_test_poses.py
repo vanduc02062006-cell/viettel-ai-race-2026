@@ -1,7 +1,6 @@
 import argparse
 import csv
 import math
-import os
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -51,10 +50,18 @@ def iter_scenes(data_root, split, scene):
             yield split_name, scene_dir
 
 
+def short_split_name(split_name):
+    if split_name.startswith("private_"):
+        return "private"
+    if split_name.startswith("public_"):
+        return "public"
+    return split_name
+
+
 def find_model_path(model_root, model_template, split_name, scene_name):
     values = {
         "split": split_name,
-        "short_split": split_name.replace("_set", ""),
+        "short_split": short_split_name(split_name),
         "scene": scene_name,
     }
     candidates = [
@@ -92,8 +99,14 @@ def find_iteration(model_path, iteration):
 
 
 def tensor_to_uint8_image(tensor):
-    arr = tensor.detach().clamp(0, 1).mul(255).byte().permute(1, 2, 0).cpu().numpy()
+    arr = tensor.detach().clamp(0, 1).mul(255).round().byte().permute(1, 2, 0).cpu().numpy()
     return Image.fromarray(arr)
+
+
+def render_output_path(output_dir, image_name, output_format):
+    if output_format == "png":
+        return output_dir / f"{Path(image_name).stem}.png"
+    return output_dir / image_name
 
 
 def render_scene(args, split_name, scene_dir):
@@ -170,7 +183,12 @@ def render_scene(args, split_name, scene_dir):
                 separate_sh=args.separate_sh,
                 use_trained_exp=args.use_trained_exposure,
             )["render"]
-            tensor_to_uint8_image(rendering).save(output_dir / image_name)
+            output_path = render_output_path(output_dir, image_name, args.output_format)
+            image = tensor_to_uint8_image(rendering)
+            if output_path.suffix.lower() in {".jpg", ".jpeg"}:
+                image.save(output_path, quality=args.jpeg_quality, subsampling=0)
+            else:
+                image.save(output_path, compress_level=1)
 
     return len(rows), output_dir
 
@@ -185,6 +203,13 @@ def main():
     parser.add_argument("--model_root", default="outputs")
     parser.add_argument("--model_template", default="{short_split}_{scene}", help="Template under --model_root.")
     parser.add_argument("--output_root", default="outputs/test_pose_renders")
+    parser.add_argument(
+        "--output_format",
+        default="png",
+        choices=["png", "original"],
+        help="Use PNG by default so the distortion pass reads a lossless intermediate.",
+    )
+    parser.add_argument("--jpeg_quality", type=int, default=100)
     parser.add_argument("--iteration", type=int, default=-1)
     parser.add_argument("--sh_degree", type=int, default=3)
     parser.add_argument("--white_background", action="store_true")

@@ -4,6 +4,7 @@ import zipfile
 from pathlib import Path
 
 import cv2
+import numpy as np
 
 
 def read_pose_rows(csv_path):
@@ -51,6 +52,7 @@ def validate(args):
             expected_h = int(float(pose["height"]))
             path = candidate_path(root, args.layout, split_name, scene_dir.name, image_name)
             status = "ok"
+            near_black_fraction = ""
 
             if not path.exists():
                 status = "missing"
@@ -60,6 +62,11 @@ def validate(args):
                     status = "read_error"
                 elif img.shape[1] != expected_w or img.shape[0] != expected_h:
                     status = f"shape_mismatch:{img.shape[1]}x{img.shape[0]}!={expected_w}x{expected_h}"
+                else:
+                    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+                    near_black_fraction = float(np.mean(gray < 8))
+                    if near_black_fraction > args.max_near_black_fraction:
+                        status = f"excess_near_black:{near_black_fraction:.4f}"
 
             if status == "ok":
                 ok_count += 1
@@ -68,13 +75,17 @@ def validate(args):
                 "scene": scene_dir.name,
                 "image_name": image_name,
                 "path": str(path),
+                "near_black_fraction": near_black_fraction,
                 "status": status,
             })
 
     report_path = Path(args.report_csv)
     report_path.parent.mkdir(parents=True, exist_ok=True)
     with open(report_path, "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=["split", "scene", "image_name", "path", "status"])
+        writer = csv.DictWriter(
+            f,
+            fieldnames=["split", "scene", "image_name", "path", "near_black_fraction", "status"],
+        )
         writer.writeheader()
         writer.writerows(rows)
 
@@ -93,9 +104,9 @@ def validate(args):
         zip_path = Path(args.zip_path)
         zip_path.parent.mkdir(parents=True, exist_ok=True)
         with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
-            for path in sorted(root.rglob("*")):
-                if path.is_file():
-                    zf.write(path, path.relative_to(root))
+            for row in rows:
+                path = Path(row["path"])
+                zf.write(path, path.relative_to(root))
         print(f"Created zip: {zip_path}")
 
 
@@ -108,6 +119,12 @@ def main():
     parser.add_argument("--layout", default="split_scene", choices=["split_scene", "scene_only", "phase_split_scene"])
     parser.add_argument("--report_csv", default="outputs/validation/submission_validation.csv")
     parser.add_argument("--zip_path", default=None)
+    parser.add_argument(
+        "--max_near_black_fraction",
+        type=float,
+        default=0.05,
+        help="Reject images with excessive invalid black borders (default: 5%%).",
+    )
     args = parser.parse_args()
     validate(args)
 

@@ -1,6 +1,8 @@
 outputs/
 logs/
 submission_round1/
+submission_check_tmp/
+submission_check_*_tmp/
 kaggle_clean/
 github_clean/
 VAI_NVS_DATA/
@@ -14,3 +16,4 @@ __pycache__/
 .DS_Store
 __MACOSX/
 *.pyc
+.ipynb_checkpoints/

@@ -1,7 +1,9 @@
 import argparse
+import csv
 import sys
 import json
 from pathlib import Path
+import numpy as np
 from colmap_io import read_cameras_binary, read_images_binary
 
 def inspect_undistorted(data_root):
@@ -58,6 +60,42 @@ def inspect_undistorted(data_root):
                     for cam_id, cam in cameras.items():
                         if cam.model not in ['SIMPLE_PINHOLE', 'PINHOLE']:
                             failed_reasons.append(f"{scene_dir.name} cam {cam_id} model is {cam.model}")
+                            all_pass = False
+
+                    if meta_json.exists() and test_poses.exists() and len(cameras) == 1:
+                        metadata = json.loads(meta_json.read_text(encoding="utf-8"))
+                        undistorted = metadata.get("undistorted_intrinsics")
+                        if undistorted is None:
+                            params = metadata.get("undistorted_params", [])
+                            if len(params) == 3:
+                                undistorted = {"fx": params[0], "fy": params[0], "cx": params[1], "cy": params[2]}
+                        if undistorted:
+                            camera = next(iter(cameras.values()))
+                            expected = np.array([
+                                undistorted["fx"], undistorted["fy"],
+                                undistorted["cx"], undistorted["cy"],
+                            ], dtype=float)
+                            actual = np.array(camera.params, dtype=float)
+                            if camera.model == "SIMPLE_PINHOLE":
+                                actual = np.array([actual[0], actual[0], actual[1], actual[2]])
+                            if not np.allclose(actual, expected, rtol=0, atol=1e-6):
+                                failed_reasons.append(f"{scene_dir.name} camera intrinsics disagree with metadata")
+                                all_pass = False
+
+                            with open(test_poses, "r", encoding="utf-8") as file:
+                                first_pose = next(csv.DictReader(file), None)
+                            if first_pose:
+                                pose_intrinsics = np.array([
+                                    float(first_pose["fx"]), float(first_pose["fy"]),
+                                    float(first_pose["cx"]), float(first_pose["cy"]),
+                                ])
+                                if not np.allclose(pose_intrinsics, expected, rtol=0, atol=1e-6):
+                                    failed_reasons.append(f"{scene_dir.name} test-pose intrinsics disagree with metadata")
+                                    all_pass = False
+
+                        k = float((metadata.get("distortion") or {}).get("k1", metadata.get("k", 0.0)))
+                        if k <= -0.05 and metadata.get("camera_policy") != "full_fov":
+                            failed_reasons.append(f"{scene_dir.name} strong negative k does not use full_fov")
                             all_pass = False
                 except Exception as e:
                     failed_reasons.append(f"{scene_dir.name} failed to read cameras: {e}")

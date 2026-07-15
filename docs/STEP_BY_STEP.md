@@ -26,90 +26,55 @@ bash scripts/setup_cuda_extensions_linux.sh
 
 Run the environment check again after building.
 
-## 3. Train one public debug scene
+## 3. Verify the corrected camera pipeline
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts/train_public_debug_gpu.ps1
+python tools/audit_distortion_roundtrip.py --split private_set1 --max_images 4
 ```
 
-This writes the model to:
+`HNI0131` and `HNI0265` must use `full_fov` and report less than 1% near-black pixels.
 
-```text
-outputs/public_hcm0031_undistorted_low
-```
-
-## 4. Render public test poses
+## 4. Run one public production ablation
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts/render_public_hcm0031_test_poses.ps1
+python tools/run_public_ablation.py --scene hcm0031 --tag r1_it30000_aa_dssim020 --iterations 30000 --resolution 1 --lambda_dssim 0.2
 ```
 
-Raw pinhole renders are written to:
+This performs train → lossless render → distort-back → public evaluation. Metrics are written to:
 
 ```text
-outputs/test_pose_renders/public_set/hcm0031
+outputs/ablations/r1_it30000_aa_dssim020/metrics.csv
 ```
 
-## 5. Distort public renders back to the original frame
+## 5. Train all private scenes
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts/distort_public_hcm0031_renders.ps1
+python tools/train_all_scenes.py --split private_set1 --iterations 30000 --resolution 1 --lambda_dssim 0.2
 ```
 
-Distorted renders are written to:
+Production defaults:
+
+- full input resolution (`-r 1`)
+- 30,000 iterations
+- antialiasing enabled for both training and rendering
+- checkpoints at 15,000 and 30,000 iterations
+- per-model and per-batch manifests
+
+Models use this template:
 
 ```text
-outputs/test_pose_renders_distorted/public_set/hcm0031
+outputs/prod_private_<scene>
 ```
 
-## 6. Evaluate public debug renders
-
-```powershell
-powershell -ExecutionPolicy Bypass -File scripts/evaluate_public_hcm0031.ps1
-```
-
-Metrics are written to:
-
-```text
-outputs/evaluation/public_hcm0031_metrics.csv
-```
-
-## 7. Train all private scenes
-
-Train each private scene into a model folder matching this template:
-
-```text
-outputs/private_<scene>
-```
-
-Examples:
-
-```text
-outputs/private_HCM0249
-outputs/private_HCM0254
-outputs/private_HNI0437
-```
-
-## 8. Render, distort, validate, and zip private submission
+## 6. Render, distort, validate, and zip private submission
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts/prepare_private_submission.ps1
 ```
 
-By default this expects model folders named with template:
+The script uses PNG intermediates, rejects excessive black borders, includes exactly the expected
+target images, and creates:
 
 ```text
-{short_split}_{scene}
-```
-
-For `private_set1/HCM0249`, that becomes:
-
-```text
-outputs/private_HCM0249
-```
-
-The final zip is:
-
-```text
-submission_round1.zip
+submission_round1_prod.zip
 ```

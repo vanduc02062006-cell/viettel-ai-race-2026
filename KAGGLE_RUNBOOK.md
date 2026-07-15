@@ -6,10 +6,10 @@ Large competition data, trained models, Kaggle handoff zips, outputs, and submis
 
 ## Expected Kaggle Input
 
-Upload the clean Kaggle dataset package separately, for example:
+Upload the corrected Kaggle dataset package separately, for example:
 
 ```text
-vai_nvs_kaggle_clean_v2.zip
+vai_nvs_kaggle_prod_v3.zip
 ```
 
 Kaggle may auto-extract the zip under `/kaggle/input`.
@@ -46,6 +46,30 @@ pip install tqdm plyfile opencv-python pillow scipy matplotlib
 bash scripts/setup_cuda_extensions_linux.sh
 ```
 
+## Camera/Distortion Gate
+
+The production package should already contain the regenerated `work_undistorted` data. If it was
+built from an older package, regenerate it from the original dataset before training:
+
+```bash
+python tools/undistort_simple_radial_dataset.py \
+  --data_root VAI_NVS_DATA \
+  --out_root work_undistorted \
+  --split all \
+  --overwrite
+
+python tools/inspect_undistorted_dataset.py --data_root work_undistorted
+```
+
+The gate must print `PASS`. If `VAI_NVS_DATA` is also included in the package, run the stronger
+pixel-level audit:
+
+```bash
+python tools/audit_distortion_roundtrip.py --split private_set1 --max_images 4
+```
+
+`HNI0131` and `HNI0265` must report `policy=full_fov` and near-black pixels well below 1%.
+
 ## Prune COLMAP Image Entries
 
 ```python
@@ -62,52 +86,36 @@ for split in ["public_set", "private_set1"]:
             ], check=True)
 ```
 
-## Public Smoke Test
+## Public Production Ablation
+
+Do not train all private scenes until this command completes and its metrics beat the previous run:
 
 ```bash
-python gaussian-splatting/train.py \
-  -s work_undistorted/phase1/public_set/hcm0031/train \
-  -m outputs/public_hcm0031_r4_it7000 \
-  --iterations 7000 \
-  --save_iterations 7000 \
-  -r 4 \
-  --data_device cpu
-
-python tools/render_test_poses.py \
-  --split public_set \
+python tools/run_public_ablation.py \
   --scene hcm0031 \
-  --model_path outputs/public_hcm0031_r4_it7000 \
-  --output_root outputs/test_pose_renders
-
-python tools/distort_back_renders.py \
-  --split public_set \
-  --scene hcm0031 \
-  --render_root outputs/test_pose_renders \
-  --output_root outputs/test_pose_renders_distorted \
-  --keep_original_extension
-
-python tools/evaluate_public_renders.py \
-  --scene hcm0031 \
-  --pred_root outputs/test_pose_renders_distorted \
-  --layout split_scene
+  --tag r1_it30000_aa_dssim020 \
+  --iterations 30000 \
+  --resolution 1 \
+  --lambda_dssim 0.2
 ```
+
+The metrics are written to `outputs/ablations/r1_it30000_aa_dssim020/metrics.csv`.
+Raw renders are lossless PNG; only the final distorted images are encoded as JPEG.
 
 ## Private Submission
 
-Train one model per private scene:
+Train one full-resolution, antialiased model per private scene:
 
 ```bash
-for scene_dir in work_undistorted/phase1/private_set1/*; do
-  scene=$(basename "$scene_dir")
-  python gaussian-splatting/train.py \
-    -s "$scene_dir/train" \
-    -m "outputs/private_$scene" \
-    --iterations 7000 \
-    --save_iterations 7000 \
-    -r 4 \
-    --data_device cpu
-done
+python tools/train_all_scenes.py \
+  --split private_set1 \
+  --iterations 30000 \
+  --resolution 1 \
+  --lambda_dssim 0.2
 ```
+
+Models are stored as `outputs/prod_private_<scene>`. Every model contains `run_manifest.json`,
+and the batch state is recorded in `outputs/training_batch_private_set1.json`.
 
 Render and validate:
 
@@ -115,19 +123,24 @@ Render and validate:
 python tools/render_test_poses.py \
   --split private_set1 \
   --model_root outputs \
-  --model_template "private_{scene}" \
-  --output_root outputs/test_pose_renders
+  --model_template "prod_{short_split}_{scene}" \
+  --output_root outputs/production_test_pose_renders \
+  --output_format png \
+  --antialiasing
 
 python tools/distort_back_renders.py \
   --split private_set1 \
-  --render_root outputs/test_pose_renders \
-  --output_root submission_round1 \
+  --render_root outputs/production_test_pose_renders \
+  --output_root submission_round1_prod \
   --layout scene_only \
   --keep_original_extension
 
 python tools/validate_submission.py \
   --split private_set1 \
-  --submission_root submission_round1 \
+  --submission_root submission_round1_prod \
   --layout scene_only \
-  --zip_path /kaggle/working/submission_round1.zip
+  --zip_path /kaggle/working/submission_round1_prod.zip
 ```
+
+Validation fails if an image is missing, has the wrong shape, or contains more than 5% near-black
+pixels. The ZIP writer includes exactly the expected 434 target images and ignores stale files.

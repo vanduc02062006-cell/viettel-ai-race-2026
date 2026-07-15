@@ -40,8 +40,33 @@ def output_scene_dir(output_root, layout, split_name, scene_name):
     return output_root / split_name / scene_name
 
 
-def build_distort_back_maps(width, height, f, cx, cy, k):
-    K = np.array([[f, 0, cx], [0, f, cy], [0, 0, 1]], dtype=np.float64)
+def build_distort_back_maps(
+    width,
+    height,
+    original_fx,
+    original_fy,
+    original_cx,
+    original_cy,
+    k,
+    undistorted_fx=None,
+    undistorted_fy=None,
+    undistorted_cx=None,
+    undistorted_cy=None,
+):
+    original_k = np.array(
+        [[original_fx, 0, original_cx], [0, original_fy, original_cy], [0, 0, 1]],
+        dtype=np.float64,
+    )
+    undistorted_k = np.array(
+        [
+            [undistorted_fx if undistorted_fx is not None else original_fx, 0,
+             undistorted_cx if undistorted_cx is not None else original_cx],
+            [0, undistorted_fy if undistorted_fy is not None else original_fy,
+             undistorted_cy if undistorted_cy is not None else original_cy],
+            [0, 0, 1],
+        ],
+        dtype=np.float64,
+    )
     dist = np.array([k, 0, 0, 0], dtype=np.float64)
 
     xs, ys = np.meshgrid(np.arange(width, dtype=np.float32), np.arange(height, dtype=np.float32))
@@ -49,7 +74,12 @@ def build_distort_back_maps(width, height, f, cx, cy, k):
 
     # For each target distorted pixel, find the corresponding ideal pinhole pixel
     # and sample the undistorted render at that coordinate.
-    undistorted_pixels = cv2.undistortPoints(distorted_pixels, K, dist, P=K)
+    undistorted_pixels = cv2.undistortPoints(
+        distorted_pixels,
+        original_k,
+        dist,
+        P=undistorted_k,
+    )
     undistorted_pixels = undistorted_pixels.reshape(height, width, 2).astype(np.float32)
     return undistorted_pixels[..., 0], undistorted_pixels[..., 1]
 
@@ -90,24 +120,37 @@ def process_scene(args, split_name, scene_dir):
 
     width = int(meta["original_width"])
     height = int(meta["original_height"])
+    original_intrinsics = meta.get("original_intrinsics") or {
+        "fx": float(meta["f"]),
+        "fy": float(meta["f"]),
+        "cx": float(meta["cx"]),
+        "cy": float(meta["cy"]),
+    }
+    undistorted_intrinsics = meta.get("undistorted_intrinsics") or original_intrinsics
+    distortion = meta.get("distortion") or {"k1": float(meta["k"])}
+
     map_x, map_y = build_distort_back_maps(
         width=width,
         height=height,
-        f=float(meta["f"]),
-        cx=float(meta["cx"]),
-        cy=float(meta["cy"]),
-        k=float(meta["k"]),
+        original_fx=float(original_intrinsics["fx"]),
+        original_fy=float(original_intrinsics["fy"]),
+        original_cx=float(original_intrinsics["cx"]),
+        original_cy=float(original_intrinsics["cy"]),
+        k=float(distortion["k1"]),
+        undistorted_fx=float(undistorted_intrinsics["fx"]),
+        undistorted_fy=float(undistorted_intrinsics["fy"]),
+        undistorted_cx=float(undistorted_intrinsics["cx"]),
+        undistorted_cy=float(undistorted_intrinsics["cy"]),
     )
 
     image_names = read_pose_names(poses_path)
     count = 0
     missing = []
     for image_name in image_names:
-        render_path = input_dir / image_name
-        if not render_path.exists():
-            # Allow renderers that save PNG even when target names are JPG.
-            png_fallback = input_dir / f"{Path(image_name).stem}.png"
-            render_path = png_fallback if png_fallback.exists() else render_path
+        # Prefer the lossless intermediate even if a stale JPEG from an older run exists.
+        png_candidate = input_dir / f"{Path(image_name).stem}.png"
+        original_name_candidate = input_dir / image_name
+        render_path = png_candidate if png_candidate.exists() else original_name_candidate
         if not render_path.exists():
             missing.append(image_name)
             continue
