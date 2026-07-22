@@ -103,6 +103,33 @@ def distort_image(render_path, output_path, map_x, map_y, jpeg_quality):
         cv2.imwrite(str(output_path), distorted)
 
 
+def copy_pinhole_scene(args, split_name, scene_dir, input_dir, out_dir):
+    image_names = read_pose_names(scene_dir / "test" / "test_poses.csv")
+    count = 0
+    missing = []
+    for image_name in image_names:
+        png_candidate = input_dir / f"{Path(image_name).stem}.png"
+        original_name_candidate = input_dir / image_name
+        render_path = png_candidate if png_candidate.exists() else original_name_candidate
+        if not render_path.exists():
+            missing.append(image_name)
+            continue
+        image = cv2.imread(str(render_path), cv2.IMREAD_COLOR)
+        if image is None:
+            raise ValueError(f"Could not read render image: {render_path}")
+        output_name = image_name if args.keep_original_extension else f"{Path(image_name).stem}.png"
+        output_path = out_dir / output_name
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        if output_path.suffix.lower() in {".jpg", ".jpeg"}:
+            cv2.imwrite(str(output_path), image, [int(cv2.IMWRITE_JPEG_QUALITY), args.jpeg_quality])
+        else:
+            cv2.imwrite(str(output_path), image)
+        count += 1
+    if missing:
+        raise FileNotFoundError(f"{split_name}/{scene_dir.name} missing {len(missing)} renders: {missing[:5]}")
+    return count, out_dir
+
+
 def process_scene(args, split_name, scene_dir):
     scene_name = scene_dir.name
     meta_path = scene_dir / "distortion_metadata.json"
@@ -111,6 +138,9 @@ def process_scene(args, split_name, scene_dir):
     out_dir = output_scene_dir(Path(args.output_root), args.layout, split_name, scene_name)
 
     if not meta_path.exists():
+        if args.copy_if_no_distortion:
+            print(f"No distortion metadata for {split_name}/{scene_name}; copying pinhole renders")
+            return copy_pinhole_scene(args, split_name, scene_dir, input_dir, out_dir)
         raise FileNotFoundError(f"Missing distortion metadata: {meta_path}")
     if not input_dir.exists():
         raise FileNotFoundError(f"Missing render directory: {input_dir}")
@@ -173,6 +203,11 @@ def main():
     parser.add_argument("--scene", default=None)
     parser.add_argument("--layout", default="split_scene", choices=["split_scene", "scene_only", "phase_split_scene"])
     parser.add_argument("--keep_original_extension", action="store_true")
+    parser.add_argument(
+        "--copy_if_no_distortion",
+        action="store_true",
+        help="Copy/re-encode renders directly for PINHOLE scenes without distortion metadata.",
+    )
     parser.add_argument("--jpeg_quality", type=int, default=95)
     args = parser.parse_args()
 
