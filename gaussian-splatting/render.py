@@ -11,6 +11,7 @@
 
 import torch
 from scene import Scene
+from scene.cameras import image_tensor_to_float
 import os
 from tqdm import tqdm
 from os import makedirs
@@ -36,7 +37,7 @@ def render_set(model_path, name, iteration, views, gaussians, pipeline, backgrou
 
     for idx, view in enumerate(tqdm(views, desc="Rendering progress")):
         rendering = render(view, gaussians, pipeline, background, use_trained_exp=train_test_exp, separate_sh=separate_sh)["render"]
-        gt = view.original_image[0:3, :, :]
+        gt = image_tensor_to_float(view.original_image)[0:3, :, :]
 
         if args.train_test_exp:
             rendering = rendering[..., rendering.shape[-1] // 2:]

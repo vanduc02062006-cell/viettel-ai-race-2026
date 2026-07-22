@@ -8,6 +8,7 @@ github_clean/
 VAI_NVS_DATA/
 work_undistorted/
 *.zip
+!KAGGLE_READY/03_ROUND2_PATCH_V3_DISKSAFE.zip
 *.ply
 *.bin
 *.pt

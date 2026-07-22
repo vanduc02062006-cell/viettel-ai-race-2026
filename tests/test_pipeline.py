@@ -1,22 +1,36 @@
 import csv
+import importlib.util
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
+import cv2
 import numpy as np
+import torch
 
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
+sys.path.insert(0, str(ROOT / "gaussian-splatting"))
 
 from colmap_io import Camera
-from distort_back_renders import build_distort_back_maps
+from distort_back_renders import build_distort_back_maps, copy_pinhole_scene
+from prepare_round2_kaggle import ALL_SCENES, GROUP_SCENES
 from render_test_poses import render_output_path, short_split_name
 from undistort_simple_radial_dataset import (
     choose_undistorted_matrix,
     rewrite_test_poses,
 )
+
+camera_spec = importlib.util.spec_from_file_location(
+    "camera_module", ROOT / "gaussian-splatting" / "scene" / "cameras.py"
+)
+camera_module = importlib.util.module_from_spec(camera_spec)
+camera_spec.loader.exec_module(camera_module)
+cache_image_tensor = camera_module.cache_image_tensor
+image_tensor_to_float = camera_module.image_tensor_to_float
 
 
 class CameraPipelineTests(unittest.TestCase):
@@ -91,6 +105,43 @@ class CameraPipelineTests(unittest.TestCase):
     def test_private_split_model_prefix_is_stable(self):
         self.assertEqual(short_split_name("private_set1"), "private")
         self.assertEqual(short_split_name("public_set"), "public")
+
+    def test_cpu_camera_cache_uses_compact_uint8_storage(self):
+        source = torch.tensor([0.0, 1.0 / 255.0, 0.5, 1.0], dtype=torch.float32)
+        cached = cache_image_tensor(source, torch.device("cpu"))
+        self.assertEqual(cached.dtype, torch.uint8)
+        self.assertEqual(cached.element_size(), 1)
+        restored = image_tensor_to_float(cached, device="cpu")
+        expected = (source * 255.0).round() / 255.0
+        torch.testing.assert_close(restored, expected)
+
+    def test_round2_groups_cover_all_added_scenes_without_overlap(self):
+        self.assertFalse(GROUP_SCENES["C"] & GROUP_SCENES["D"])
+        self.assertEqual(GROUP_SCENES["C"] | GROUP_SCENES["D"], ALL_SCENES)
+        self.assertEqual(len(ALL_SCENES), 7)
+
+    def test_pinhole_scene_is_copied_with_original_submission_name(self):
+        with tempfile.TemporaryDirectory() as directory:
+            directory = Path(directory)
+            scene_dir = directory / "chair"
+            input_dir = directory / "renders"
+            output_dir = directory / "submission" / "chair"
+            (scene_dir / "test").mkdir(parents=True)
+            input_dir.mkdir()
+            with open(scene_dir / "test" / "test_poses.csv", "w", newline="", encoding="utf-8") as file:
+                writer = csv.DictWriter(file, fieldnames=["image_name"])
+                writer.writeheader()
+                writer.writerow({"image_name": "frame_001.jpg"})
+            source = np.full((8, 12, 3), 127, dtype=np.uint8)
+            cv2.imwrite(str(input_dir / "frame_001.png"), source)
+            args = SimpleNamespace(keep_original_extension=True, jpeg_quality=99)
+            count, result_dir = copy_pinhole_scene(args, "private_set1", scene_dir, input_dir, output_dir)
+            self.assertEqual(count, 1)
+            self.assertEqual(result_dir, output_dir)
+            output_path = output_dir / "frame_001.jpg"
+            self.assertTrue(output_path.exists())
+            rendered = cv2.imread(str(output_path), cv2.IMREAD_COLOR)
+            self.assertEqual(rendered.shape, source.shape)
 
 
 if __name__ == "__main__":

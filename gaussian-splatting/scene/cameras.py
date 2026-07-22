@@ -16,6 +16,21 @@ from utils.graphics_utils import getWorld2View2, getProjectionMatrix
 from utils.general_utils import PILtoTorch
 import cv2
 
+
+def cache_image_tensor(image, data_device):
+    """Keep CPU camera images compact without changing their 8-bit values."""
+    if data_device.type == "cpu":
+        return (image.clamp(0.0, 1.0) * 255.0).round().to(torch.uint8)
+    return image.clamp(0.0, 1.0).to(data_device)
+
+
+def image_tensor_to_float(image, device="cuda"):
+    """Move a cached image to the target device and restore [0, 1] floats."""
+    image = image.to(device, non_blocking=True)
+    if image.dtype == torch.uint8:
+        image = image.float().div_(255.0)
+    return image
+
 class Camera(nn.Module):
     def __init__(self, resolution, colmap_id, R, T, FoVx, FoVy, depth_params, image, invdepthmap,
                  image_name, uid,
@@ -42,25 +57,34 @@ class Camera(nn.Module):
         resized_image_rgb = PILtoTorch(image, resolution)
         gt_image = resized_image_rgb[:3, ...]
         self.alpha_mask = None
+        alpha_mask = None
         if resized_image_rgb.shape[0] == 4:
-            self.alpha_mask = resized_image_rgb[3:4, ...].to(self.data_device)
-        else: 
-            self.alpha_mask = torch.ones_like(resized_image_rgb[0:1, ...].to(self.data_device))
+            alpha_mask = resized_image_rgb[3:4, ...]
+        elif train_test_exp and is_test_view:
+            # An RGB image needs a synthetic mask only for the train/test exposure split.
+            alpha_mask = torch.ones_like(resized_image_rgb[0:1, ...])
 
-        if train_test_exp and is_test_view:
+        if alpha_mask is not None and train_test_exp and is_test_view:
             if is_test_dataset:
-                self.alpha_mask[..., :self.alpha_mask.shape[-1] // 2] = 0
+                alpha_mask[..., :alpha_mask.shape[-1] // 2] = 0
             else:
-                self.alpha_mask[..., self.alpha_mask.shape[-1] // 2:] = 0
+                alpha_mask[..., alpha_mask.shape[-1] // 2:] = 0
 
-        self.original_image = gt_image.clamp(0.0, 1.0).to(self.data_device)
+        if alpha_mask is not None:
+            self.alpha_mask = cache_image_tensor(alpha_mask, self.data_device)
+
+        self.original_image = cache_image_tensor(gt_image, self.data_device)
         self.image_width = self.original_image.shape[2]
         self.image_height = self.original_image.shape[1]
 
         self.invdepthmap = None
         self.depth_reliable = False
         if invdepthmap is not None:
-            self.depth_mask = torch.ones_like(self.alpha_mask)
+            self.depth_mask = torch.ones(
+                (1, self.image_height, self.image_width),
+                dtype=torch.float32,
+                device=self.data_device,
+            )
             self.invdepthmap = cv2.resize(invdepthmap, resolution)
             self.invdepthmap[self.invdepthmap < 0] = 0
             self.depth_reliable = True

@@ -1,0 +1,9 @@
+Viettel AI Race 2026 - Round 2 V3 disk-safe patch
+
+- Does not create new optimizer checkpoints by default; these are much larger than final PLY models.
+- Can still resume an existing checkpoint supplied through a Kaggle input dataset.
+- Deletes restored checkpoints immediately after a scene reaches iteration 40,000.
+- Requires at least 6 GiB free in /kaggle/working before starting another scene.
+- Deletes prepared training images as soon as each scene completes.
+- Keeps the two-GPU scene queues and serial failure retry from V2.
+- Supports C1 (HCM0421, HCM0540) and C2 (HCM0539, HCM0644), so Group C can be split across two fresh Kaggle sessions.
